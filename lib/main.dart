@@ -873,6 +873,57 @@ class _AuthPageState extends State<AuthPage> {
     super.dispose();
   }
 
+  Future<void> resetPassword() async {
+    final email = emailController.text.trim();
+
+    if (email.isEmpty || !RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid email address first.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => loading = true);
+
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'If an account exists for this email, a password reset link has been sent. Please check your inbox.',
+          ),
+        ),
+      );
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error.message ?? 'Could not send password reset email.',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Something went wrong. Please try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => loading = false);
+      }
+    }
+  }
+
   Future<void> submit() async {
     if (!formKey.currentState!.validate()) return;
 
@@ -1013,6 +1064,17 @@ class _AuthPageState extends State<AuthPage> {
                       return null;
                     },
                   ),
+                  if (!isRegistering)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: loading ? null : resetPassword,
+                        child: const Text(
+                          'Forgot Password?',
+                          style: TextStyle(color: oceanBlue),
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: 24),
 
                   SizedBox(
