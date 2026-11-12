@@ -6,6 +6,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 const Color skyBlue = Color(0xFF79C9EA);
 const Color iceBlue = Color(0xFFBDEBFA);
@@ -39,7 +41,7 @@ class AquaLinkApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
-      home: const AquaLinkShell(),
+      home: const AuthGate(),
     );
   }
 }
@@ -814,6 +816,239 @@ class InformationPage extends StatelessWidget {
               style: TextStyle(fontSize: 16, height: 1.6),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// AUTHENTICATION GATE
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (snapshot.hasData) {
+          return const AquaLinkShell();
+        }
+
+        return const AuthPage();
+      },
+    );
+  }
+}
+
+// LOGIN AND REGISTRATION
+class AuthPage extends StatefulWidget {
+  const AuthPage({super.key});
+
+  @override
+  State<AuthPage> createState() => _AuthPageState();
+}
+
+class _AuthPageState extends State<AuthPage> {
+  final formKey = GlobalKey<FormState>();
+  final nameController = TextEditingController();
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  bool isRegistering = false;
+  bool loading = false;
+  bool hidePassword = true;
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> submit() async {
+    if (!formKey.currentState!.validate()) return;
+
+    setState(() => loading = true);
+
+    try {
+      final auth = FirebaseAuth.instance;
+
+      if (isRegistering) {
+        final credential = await auth.createUserWithEmailAndPassword(
+          email: emailController.text.trim(),
+          password: passwordController.text.trim(),
+        );
+
+        final user = credential.user!;
+
+        await user.updateDisplayName(nameController.text.trim());
+
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'uid': user.uid,
+          'fullName': nameController.text.trim(),
+          'email': emailController.text.trim(),
+          'role': 'resident',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      } else {
+        await auth.signInWithEmailAndPassword(
+          email: emailController.text.trim(),
+          password: passwordController.text.trim(),
+        );
+      }
+    } on FirebaseAuthException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message ?? 'Authentication failed.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Something went wrong: $error')));
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Form(
+              key: formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const AquaLinkLogo(size: 75),
+                  const SizedBox(height: 18),
+                  const Text(
+                    'Welcome to AquaLink',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 27,
+                      fontWeight: FontWeight.bold,
+                      color: navy,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    isRegistering
+                        ? 'Create an account to report water problems.'
+                        : 'Sign in to connect with your water services.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 30),
+
+                  if (isRegistering) ...[
+                    TextFormField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Full name',
+                        prefixIcon: Icon(Icons.person_outline),
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                          ? 'Please enter your full name.'
+                          : null,
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  TextFormField(
+                    controller: emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                      labelText: 'Email address',
+                      prefixIcon: Icon(Icons.email_outlined),
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (value) {
+                      if (value == null ||
+                          !RegExp(r'^[^@]+@[^@]+\.[^@]+$')
+                              .hasMatch(value.trim())) {
+                        return 'Enter a valid email address.';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  TextFormField(
+                    controller: passwordController,
+                    obscureText: hidePassword,
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          hidePassword
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
+                        ),
+                        onPressed: () {
+                          setState(() => hidePassword = !hidePassword);
+                        },
+                      ),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.length < 6) {
+                        return 'Password must have at least 6 characters.';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 24),
+
+                  SizedBox(
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: loading ? null : submit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: oceanBlue,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: loading
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : Text(isRegistering ? 'Create Account' : 'Login'),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  TextButton(
+                    onPressed: loading
+                        ? null
+                        : () {
+                            setState(() {
+                              isRegistering = !isRegistering;
+                            });
+                          },
+                    child: Text(
+                      isRegistering
+                          ? 'Already have an account? Login'
+                          : 'New to AquaLink? Create an account',
+                      style: const TextStyle(color: oceanBlue),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
