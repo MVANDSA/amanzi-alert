@@ -641,15 +641,27 @@ class _ReportFormPageState extends State<ReportFormPage> {
 }
 
 // MY REPORTS SCREEN
+
 class MyReportsPage extends StatelessWidget {
   const MyReportsPage({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      return const Scaffold(
+        body: Center(child: Text('Please log in to view your reports.')),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('My Reports')),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
-        future: ReportDatabase.getReports(),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('reports')
+            .where('reporterUid', isEqualTo: user.uid)
+            .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -661,7 +673,18 @@ class MyReportsPage extends StatelessWidget {
             );
           }
 
-          final reports = snapshot.data ?? [];
+          final documents = snapshot.data?.docs ?? [];
+
+          final reports = documents.map((document) {
+            return {...document.data(), 'id': document.id};
+          }).toList();
+
+          reports.sort((a, b) {
+            final dateA = _reportDate(a['createdAt']);
+            final dateB = _reportDate(b['createdAt']);
+
+            return dateB.compareTo(dateA);
+          });
 
           if (reports.isEmpty) {
             return const Center(
@@ -706,14 +729,15 @@ class MyReportsPage extends StatelessWidget {
                     child: Icon(Icons.water_drop, color: oceanBlue),
                   ),
                   title: Text(
-                    report['category'] as String,
+                    report['category'] as String? ?? 'Water Problem',
                     style: const TextStyle(
                       color: navy,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   subtitle: Text(
-                    '${report['status']}\n${report['location'] ?? 'Location not provided'}',
+                    '${report['status'] ?? 'Submitted'}\n'
+                    '${report['location'] ?? 'Location not provided'}',
                   ),
                   isThreeLine: true,
                   trailing: const Icon(Icons.chevron_right),
@@ -744,7 +768,7 @@ class ReportDetailsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final photo = report['photoPath'] as String?;
-    final date = DateTime.tryParse(report['createdAt'] as String);
+    final date = _reportDate(report['createdAt']);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Report Details')),
@@ -752,7 +776,7 @@ class ReportDetailsPage extends StatelessWidget {
         padding: const EdgeInsets.all(20),
         children: [
           Text(
-            report['category'] as String,
+            report['category'] as String? ?? 'Water Problem',
             style: const TextStyle(
               fontSize: 23,
               fontWeight: FontWeight.bold,
@@ -760,18 +784,19 @@ class ReportDetailsPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 15),
-          _detailRow('Status', report['status'] as String),
-          _detailRow('Description', report['description'] as String),
+          _detailRow(
+            'Reference number',
+            report['referenceNumber'] as String? ?? 'Not available',
+          ),
+          _detailRow('Status', report['status'] as String? ?? 'Submitted'),
+          _detailRow('Description', report['description'] as String? ?? ''),
           _detailRow(
             'Location',
             (report['location'] as String?)?.isNotEmpty == true
                 ? report['location'] as String
                 : 'Not provided',
           ),
-          _detailRow(
-            'Date submitted',
-            date == null ? 'Unknown' : date.toLocal().toString().split('.')[0],
-          ),
+          _detailRow('Date submitted', date.toLocal().toString().split('.')[0]),
           if (report['latitude'] != null && report['longitude'] != null)
             _detailRow(
               'GPS coordinates',
@@ -780,13 +805,20 @@ class ReportDetailsPage extends StatelessWidget {
           if (photo != null) ...[
             const SizedBox(height: 18),
             const Text(
-              'Attached photo',
+              'Attached photo (saved on this device)',
               style: TextStyle(fontWeight: FontWeight.bold, color: navy),
             ),
             const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: Image.file(File(photo), height: 220, fit: BoxFit.cover),
+              child: Image.file(
+                File(photo),
+                height: 220,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return const Text('Photo is not available on this device.');
+                },
+              ),
             ),
           ],
         ],
@@ -813,6 +845,18 @@ class ReportDetailsPage extends StatelessWidget {
       ),
     );
   }
+}
+
+DateTime _reportDate(dynamic value) {
+  if (value is Timestamp) {
+    return value.toDate();
+  }
+
+  if (value is String) {
+    return DateTime.tryParse(value) ?? DateTime(2000);
+  }
+
+  return DateTime(2000);
 }
 
 // INFORMATION SCREEN
