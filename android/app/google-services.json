@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "108311217015",
+    "project_id": "aqualink-7466b",
+    "storage_bucket": "aqualink-7466b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:108311217015:android:56afb48f009d4375285772",
+        "android_client_info": {
+          "package_name": "com.example.amanzi_alert"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDTnGWneQnC7e0ludlvx0BvSB9v0XjwtN0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
