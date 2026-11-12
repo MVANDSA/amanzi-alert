@@ -423,9 +423,39 @@ class _ReportFormPageState extends State<ReportFormPage> {
   Future<void> saveReport() async {
     if (!formKey.currentState!.validate()) return;
 
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please log in before submitting a report.'),
+        ),
+      );
+      return;
+    }
+
     setState(() => saving = true);
 
     try {
+      final now = DateTime.now();
+      final reportReference = 'AQL-${now.millisecondsSinceEpoch}';
+
+      final reportData = {
+        'reporterUid': user.uid,
+        'category': category,
+        'description': descriptionController.text.trim(),
+        'location': locationController.text.trim(),
+        'latitude': latitude,
+        'longitude': longitude,
+        'status': 'Submitted',
+        'referenceNumber': reportReference,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+
+      // Save the report to Firebase.
+      await FirebaseFirestore.instance.collection('reports').add(reportData);
+
+      // Keep a local copy in SQLite as well.
       await ReportDatabase.addReport({
         'category': category,
         'description': descriptionController.text.trim(),
@@ -434,23 +464,30 @@ class _ReportFormPageState extends State<ReportFormPage> {
         'longitude': longitude,
         'photoPath': photoPath,
         'status': 'Submitted',
-        'createdAt': DateTime.now().toIso8601String(),
+        'createdAt': now.toIso8601String(),
       });
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Your report was saved successfully.')),
-        );
-        Navigator.pop(context, true);
-      }
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Report submitted successfully! Reference: $reportReference',
+          ),
+        ),
+      );
+
+      Navigator.pop(context, true);
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not save report: $error')),
-        );
-      }
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not save report: $error')));
     } finally {
-      if (mounted) setState(() => saving = false);
+      if (mounted) {
+        setState(() => saving = false);
+      }
     }
   }
 
