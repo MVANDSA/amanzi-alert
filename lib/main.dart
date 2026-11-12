@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 const Color skyBlue = Color(0xFF79C9EA);
 const Color iceBlue = Color(0xFFBDEBFA);
@@ -12,8 +13,11 @@ const Color cloudBlue = Color(0xFFEAF8FD);
 const Color oceanBlue = Color(0xFF247B9E);
 const Color navy = Color(0xFF173B50);
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp();
+
   runApp(const AquaLinkApp());
 }
 
