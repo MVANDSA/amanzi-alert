@@ -8,6 +8,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 const Color skyBlue = Color(0xFF79C9EA);
 const Color iceBlue = Color(0xFFBDEBFA);
@@ -15,10 +16,59 @@ const Color cloudBlue = Color(0xFFEAF8FD);
 const Color oceanBlue = Color(0xFF247B9E);
 const Color navy = Color(0xFF173B50);
 
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  debugPrint('Background notification received: ${message.messageId}');
+}
+
+Future<void> setupFirebaseMessaging() async {
+  final messaging = FirebaseMessaging.instance;
+
+  await messaging.requestPermission(alert: true, badge: true, sound: true);
+
+  messaging.onRegistered.listen((installationId) {
+    debugPrint('AquaLink Firebase Installation ID: $installationId');
+  });
+
+  await messaging.register();
+
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    final notification = message.notification;
+    final context = navigatorKey.currentContext;
+
+    if (notification != null && context != null && context.mounted) {
+      showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(notification.title ?? 'AquaLink Notification'),
+          content: Text(notification.body ?? 'You have a new update.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
+  });
+
+  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+    debugPrint('Notification opened: ${message.messageId}');
+  });
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Firebase.initializeApp();
+
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
+  await setupFirebaseMessaging();
 
   runApp(const AquaLinkApp());
 }
@@ -29,6 +79,7 @@ class AquaLinkApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'AquaLink',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -904,6 +955,8 @@ class InformationPage extends StatelessWidget {
 }
 
 // AUTHENTICATION GATE
+
+// AUTHENTICATION GATE
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
@@ -911,18 +964,60 @@ class AuthGate extends StatelessWidget {
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+      builder: (context, authSnapshot) {
+        if (authSnapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
 
-        if (snapshot.hasData) {
-          return const AquaLinkShell();
+        final user = authSnapshot.data;
+
+        if (user == null) {
+          return const AuthPage();
         }
 
-        return const AuthPage();
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .snapshots(),
+          builder: (context, profileSnapshot) {
+            if (profileSnapshot.connectionState == ConnectionState.waiting) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+
+            if (profileSnapshot.hasError) {
+              return const Scaffold(
+                body: Center(
+                  child: Text('Could not load your account profile.'),
+                ),
+              );
+            }
+
+            if (!profileSnapshot.hasData || !profileSnapshot.data!.exists) {
+              return const Scaffold(
+                body: Center(
+                  child: Text('Your AquaLink profile could not be found.'),
+                ),
+              );
+            }
+
+            final role = profileSnapshot.data!.data()?['role'] ?? 'resident';
+
+            if (role == 'admin') {
+              return const AdminDashboard();
+            }
+
+            if (role == 'agent') {
+              return const AgentDashboard();
+            }
+
+            return const AquaLinkShell();
+          },
+        );
       },
     );
   }
@@ -1193,6 +1288,286 @@ class _AuthPageState extends State<AuthPage> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ADMIN DASHBOARD
+class AdminDashboard extends StatelessWidget {
+  const AdminDashboard({super.key});
+
+  Future<void> assignAgent(
+    String reportId,
+    String agentUid,
+    String agentName,
+  ) async {
+    await FirebaseFirestore.instance.collection('reports').doc(reportId).update(
+      {
+        'assignedAgentUid': agentUid,
+        'assignedAgentName': agentName,
+        'assignedAt': FieldValue.serverTimestamp(),
+        'status': 'Assigned',
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Admin Dashboard'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => FirebaseAuth.instance.signOut(),
+          ),
+        ],
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance.collection('reports').snapshots(),
+        builder: (context, reportSnapshot) {
+          if (reportSnapshot.hasError) {
+            return const Center(child: Text('Could not load reports.'));
+          }
+
+          if (!reportSnapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final reports = reportSnapshot.data!.docs;
+
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirebaseFirestore.instance
+                .collection('users')
+                .where('role', isEqualTo: 'agent')
+                .snapshots(),
+            builder: (context, agentSnapshot) {
+              if (agentSnapshot.hasError) {
+                return const Center(
+                  child: Text('Could not load water agents.'),
+                );
+              }
+
+              if (!agentSnapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final agents = agentSnapshot.data!.docs;
+
+              return ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Text(
+                    'Total reports: ${reports.length}',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: navy,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  if (agents.isEmpty)
+                    const Text(
+                      'No water agents registered yet. '
+                      'Agent accounts must be created and authorised first.',
+                    ),
+                  ...reports.map((document) {
+                    final report = document.data();
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 14),
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              report['category'] ?? 'Water Problem',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                                color: navy,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Reference: ${report['referenceNumber'] ?? 'N/A'}',
+                            ),
+                            Text(
+                              'Location: ${report['location'] ?? 'Not provided'}',
+                            ),
+                            Text('Status: ${report['status'] ?? 'Submitted'}'),
+                            const SizedBox(height: 10),
+                            DropdownButtonFormField<String>(
+                              initialValue:
+                                  agents.any(
+                                    (agent) =>
+                                        agent.id == report['assignedAgentUid'],
+                                  )
+                                  ? report['assignedAgentUid'] as String
+                                  : null,
+                              decoration: const InputDecoration(
+                                labelText: 'Assign water agent',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: agents.map((agent) {
+                                final data = agent.data();
+                                return DropdownMenuItem<String>(
+                                  value: agent.id,
+                                  child: Text(
+                                    data['fullName'] ??
+                                        data['email'] ??
+                                        'Agent',
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: (agentUid) async {
+                                if (agentUid == null) return;
+
+                                final selectedAgent = agents.firstWhere(
+                                  (agent) => agent.id == agentUid,
+                                );
+
+                                final data = selectedAgent.data();
+
+                                await assignAgent(
+                                  document.id,
+                                  agentUid,
+                                  data['fullName'] ?? data['email'] ?? 'Agent',
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+// WATER AGENT DASHBOARD
+class AgentDashboard extends StatelessWidget {
+  const AgentDashboard({super.key});
+
+  Future<void> updateStatus(String reportId, String status) async {
+    await FirebaseFirestore.instance.collection('reports').doc(reportId).update(
+      {'status': status, 'updatedAt': FieldValue.serverTimestamp()},
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser!;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Water Agent Dashboard'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => FirebaseAuth.instance.signOut(),
+          ),
+        ],
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('reports')
+            .where('assignedAgentUid', isEqualTo: user.uid)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return const Center(
+              child: Text('Could not load assigned reports.'),
+            );
+          }
+
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final reports = snapshot.data!.docs;
+
+          if (reports.isEmpty) {
+            return const Center(
+              child: Text('You have no assigned reports yet.'),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: reports.length,
+            itemBuilder: (context, index) {
+              final document = reports[index];
+              final report = document.data();
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 14),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        report['category'] ?? 'Water Problem',
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          color: navy,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text('Reference: ${report['referenceNumber'] ?? 'N/A'}'),
+                      Text('Description: ${report['description'] ?? ''}'),
+                      Text('Location: ${report['location'] ?? 'Not provided'}'),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        initialValue:
+                            [
+                              'Assigned',
+                              'In Progress',
+                              'Resolved',
+                            ].contains(report['status'])
+                            ? report['status'] as String
+                            : 'Assigned',
+                        decoration: const InputDecoration(
+                          labelText: 'Update report status',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'Assigned',
+                            child: Text('Assigned'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'In Progress',
+                            child: Text('In Progress'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Resolved',
+                            child: Text('Resolved'),
+                          ),
+                        ],
+                        onChanged: (status) {
+                          if (status != null) {
+                            updateStatus(document.id, status);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
       ),
     );
   }
